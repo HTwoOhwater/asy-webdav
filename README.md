@@ -30,32 +30,48 @@
 - 一个能用的 AnyShare 账号（本项目在山大云盘 `icloud.sdu.edu.cn` 上实测）
 - **[`asy-cli`](https://github.com/HTwoOhwater/anyshare-university-cli)** —— 本项目的云盘 API 全部来自它
 
-> ⚠️ `asy-cli` **没有发布到 npm**，必须手动克隆。本网关会按下面的顺序找它：
+`asy-cli` 没有发布到 npm，但已声明为本项目的依赖，`npm install` 会**自动从 GitHub 拉取**，
+不需要手动克隆。装完登录一次即可（token 会自动续期）：
+
+```bat
+asy login --cas
+```
+
+> 本网关按下面的顺序找 `asy-cli`：
 >
 > 1. 环境变量 `ASY_CLI_PATH` 指向的目录
-> 2. **`asy-webdav` 的同级目录** `../asy-cli` ← 推荐
-> 3. `node_modules/anyshare-university-cli`
->
-> ```bat
-> cd C:\path\to
-> git clone https://github.com/HTwoOhwater/anyshare-university-cli.git asy-cli
-> cd asy-cli && npm install
-> node asy.js login --cas        :: 浏览器/交互式登录，token 会自动续期
-> ```
+> 2. `asy-webdav` 的同级目录 `../asy-cli`（开发时的布局）
+> 3. 包内嵌套的 `node_modules/anyshare-university-cli`
+> 4. **Node 模块解析** —— 走这条路才能正确处理 npm 的依赖提升
+>    （本地安装和 `-g` 全局安装都会把依赖提到顶层 `node_modules`，
+>    上面写死的第 3 条在那个布局下并不存在）
 
 ### 1. 安装
+
+**方式 A：全局安装（推荐，一条命令）**
+
+```bat
+npm install -g github:HTwoOhwater/asy-webdav
+```
+
+装完就有 `asy-webdav` 命令，配置和日志放在用户目录，升级包不会丢。
+
+**方式 B：克隆仓库（想改代码时用）**
 
 ```bat
 cd C:\path\to\asy-webdav
 npm install
 ```
 
-> 目录结构应该是这样（两者同级）：
+> 方式 B 的目录结构（`asy-cli` 由 npm 自动装进 `node_modules`，无需手动 clone）：
 >
 > ```
-> C:\path\to\
-> ├── asy-cli\        ← 先 clone 这个
-> └── asy-webdav\     ← 本仓库
+> C:\path\to\asy-webdav\
+> ├── cli.js
+> ├── server.js
+> ├── config.json          ← 首次运行生成（含密码，已在 .gitignore 里）
+> └── node_modules\
+>     └── anyshare-university-cli\   ← npm install 自动拉取
 > ```
 
 ### 2. 配置 `config.json`（首次运行会自动生成）
@@ -92,20 +108,41 @@ npm install
 
 ### 3. 启动
 
-双击 `start.bat`，或：
+```bat
+asy-webdav start          :: 后台启动
+asy-webdav status         :: 看状态（进程 / 端口 / 端到端探测）
+asy-webdav stop           :: 停止
+asy-webdav restart        :: 重启
+```
+
+想看实时输出就用前台模式（Ctrl+C 停止，不写 PID 文件）：
 
 ```bat
-npm start
+asy-webdav start --foreground
+:: 或者直接 npm start
 ```
 
-看到下面这样就成功了（启动时会先解析云端根目录，配置错了会立刻报错而不是等 Zotero 报错）：
+启动成功的样子：
 
 ```
-✅ AnyShare WebDAV 网关已启动
-   地址     : http://127.0.0.1:1901/
-   云端根   : /WebDAV/SyncDisk  (gns://395C...)
-   根目录子项: 4 个
+✅ 服务已启动
+   PID      : 31496
+   监听地址 : 127.0.0.1:1901  ,  100.x.y.z:1901
+   日志     : C:\...\server.log
+   停止     : asy-webdav stop
 ```
+
+`asy-webdav status` 会顺便发一个**带认证的 `PROPFIND /`** 做端到端验证，
+这样「进程活着但云端不通」这种情况也能立刻看出来：
+
+```
+运行状态
+  状态         : ✅ 运行中（127.0.0.1:1901）
+  PID          : 31496（来源：pid 文件）
+  端到端       : ✅ PROPFIND / → 207
+```
+
+> 启动时会先解析云端根目录，配置错了会立刻报错，而不是等 Zotero 报错。
 
 ### 4. 配置 Zotero
 
@@ -141,6 +178,114 @@ npm start
 > `/zotero` 已存在于云端，两个客户端互不干扰。
 
 ---
+
+## 命令行参考
+
+`asy-webdav` 分两层，互不依赖。
+
+### 进程管理（三平台一致，不需要任何权限）
+
+| 命令 | 说明 |
+|---|---|
+| `asy-webdav start` | 后台启动，写 PID 文件与日志 |
+| `asy-webdav start --foreground` | 前台运行，Ctrl+C 停止（不写 PID 文件） |
+| `asy-webdav stop [--force]` | 停止。`--force` 用于「端口被占但查不到 PID」时 |
+| `asy-webdav restart` | 重启 |
+| `asy-webdav status [--json] [--no-probe]` | 状态：进程 / 端口 / 端到端探测 / 后端凭据 |
+| `asy-webdav logs [--access\|--err] [-f] [-n 30]` | 看日志，`-f` 持续跟踪 |
+
+「是否在运行」以**端口能否连通**为准，而不是只看 PID 文件。这一点是刻意的：
+
+- 服务由 systemd / 任务计划程序拉起时**根本没有 PID 文件**，只看文件会误判成「未运行」；
+- 反过来，手工 `node server.js` 起的进程也能被 `stop` 认出来（按端口反查 PID）。
+
+### 配置与诊断
+
+| 命令 | 说明 |
+|---|---|
+| `asy-webdav config show` | 显示配置（密码打码） |
+| `asy-webdav config set <键> <值>` | 改配置，`hosts` 用逗号分隔 |
+| `asy-webdav config path` | 显示各文件位置 |
+| `asy-webdav doctor` | 环境自检 |
+
+**换机器部署前先跑 `asy-webdav doctor`**：
+
+```
+✅ Node.js 版本
+✅ 运行目录可写
+✅ 配置文件
+✅ 监听地址
+✅ 服务运行中
+✅ 端到端探测
+✅ asy-cli
+✅ 凭据
+⚠️  服务化（自启）
+```
+
+其中「监听地址」专治换机器的经典翻车：`hosts` 里写死的旧机器 IP
+不属于新机器时，服务会因 `EADDRNOTAVAIL` **直接启动失败**。doctor 会提前指出来。
+
+### 文件位置与环境变量
+
+默认全部与包同目录（和旧版本一致）。用 `ASY_WEBDAV_HOME` 可以改到别处：
+
+```bat
+set ASY_WEBDAV_HOME=C:\data\asy-webdav
+asy-webdav config path
+```
+
+| 环境变量 | 作用 |
+|---|---|
+| `ASY_WEBDAV_HOME` | 运行目录（`config.json` / 日志 / PID 文件） |
+| `ASY_WEBDAV_CONFIG` | 只覆盖 `config.json` 的路径 |
+| `ASY_CONFIG_DIR` | 传给 `asy-cli` 的凭据目录 |
+| `ASY_CLI_PATH` | `asy-cli` 仓库位置 |
+
+## 服务化（开机 / 登录自启）
+
+```bat
+asy-webdav service install          :: 登录后自动启动（不需要管理员权限）
+asy-webdav service install --boot   :: 开机就启动（Windows 需要管理员）
+asy-webdav service status
+asy-webdav service uninstall
+```
+
+`--dry-run` 只打印将要写入的内容，不落盘 —— 装之前先看一眼最稳妥：
+
+```bat
+asy-webdav service install --dry-run
+```
+
+按平台生成**原生**配置，不引入 nssm 之类的第三方包装器：
+
+| 平台 | 生成什么 | 默认 | `--boot` | `--system` |
+|---|---|---|---|---|
+| Windows | `.cmd` 包装脚本 + 任务计划程序任务 | 登录触发（免管理员） | `ONSTART` + SYSTEM（需管理员） | — |
+| Linux | systemd unit | `systemctl --user`（免 root） | 自动开 `linger` | 装到 `/etc/systemd/system`（需 sudo） |
+| macOS | launchd plist | `~/Library/LaunchAgents` | 同左 | `/Library/LaunchDaemons`（需 root） |
+
+### 为什么生成的配置里要写死绝对路径
+
+服务/计划任务在**「没有加载用户配置文件」**的环境下运行时，`os.homedir()`
+会指向 `C:\Windows\System32\config\systemprofile` 之类的系统目录，
+于是 `~/.anyshare-cli/config.json` 就找不到了，服务直接起不来。
+
+所以生成的单元文件/包装脚本会把 `ASY_WEBDAV_HOME`、`ASY_CONFIG_DIR`、
+`ASY_CLI_PATH` 三个**绝对路径**钉死。这也正是 `config.json` 里 `asyConfigDir`
+那一项存在的意义。
+
+> 💡 **顺带解决 token 互踢**：给服务单独设一份 `asyConfigDir` 并单独登录一次，
+> 服务就有了自己的 `refresh_token`，不会再和 `asy` 命令行互相踢下线（见「坑」第 5 条）。
+
+### 重启后不登录也能用吗
+
+| 方式 | 重启后 | 需要管理员 |
+|---|---|---|
+| `service install`（默认） | 必须先登录一次 | ❌ |
+| `service install --boot` | 不用登录 | ✅ |
+
+如果是从 iPad 通过 Tailscale 连桌面机，而桌面机重启后停在登录界面，
+默认方式就连不上 —— 要避免就必须用 `--boot`。
 
 ## 远程访问（Tailscale）
 
@@ -291,9 +436,13 @@ GET /同步测试.txt -> HTTP 200, Content-Length 33, 实收 33 B
 PROPFIND /zotero Depth:1 -> HTTP 207，579 个子项   ← 真实 Zotero 附件库
 ```
 
-### 离线契约测试（`npm test`，22/22 通过）
+### 离线测试（`npm test`，47/47 通过）
 
-用内存假云盘 + 假对象存储跑一个**真实的 webdav-server**，发真实 HTTP 请求，不碰学校服务器、不产生外网流量。
+- **22 项契约测试**：用内存假云盘 + 假对象存储跑一个**真实的 webdav-server**，
+  发真实 HTTP 请求，不碰学校服务器、不产生外网流量。
+- **25 项 CLI 测试**：参数解析、中文对齐、配置默认值、
+  以及三个平台的服务配置生成（systemd unit / launchd plist / Windows 包装脚本）
+  都是纯函数，可以在任何系统上验证任意平台的输出。
 
 ---
 
@@ -383,13 +532,19 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 
 | 文件 | 作用 |
 |---|---|
-| `server.js` | 服务入口：配置、认证、日志、启动自检 |
+| `cli.js` | **命令行入口**：`start`/`stop`/`status`/`logs`/`service`/`config`/`doctor` |
+| `server.js` | 服务入口（普通前台程序，不知道服务管理器存在） |
+| `lib/paths.js` | 统一的运行目录 / 配置文件 / PID / 日志路径解析 |
+| `lib/config.js` | 配置读写（`server.js` 与 `cli.js` 共用） |
+| `lib/daemon.js` | 进程生命周期：PID 文件、后台守护、按端口反查进程 |
+| `lib/service.js` | 服务化：生成 systemd / launchd / 任务计划程序配置 |
 | `lib/asy-cli.js` | 定位并加载 `asy-cli` 的 `lib/`（不复制代码，可用 `ASY_CLI_PATH` 指定） |
 | `lib/client.js` | 云盘访问层：路径解析、目录列举缓存、并发闸门、上传/下载 |
 | `lib/anyshare-fs.js` | **核心**：`webdav-server` 的 `FileSystem` 子类，把所有钩子接到云盘 API |
 | `lib/util.js` | TTL 缓存、并发闸门、路径工具 |
 | `test/fake-cloud.js` | 测试用假云盘（内存 API + 假对象存储），行为刻意模仿真实 API 的怪癖 |
 | `test/contract.test.js` | 22 项端到端契约测试 |
+| `test/cli.test.js` | 25 项 CLI / 平台适配单元测试（纯函数，不碰网络与系统） |
 | `scripts/live-smoke.js` | 真实云盘冒烟测试（16 项，自动清理） |
 | `scripts/probe-ondup.js` | `ondup` 语义对照实验 |
 | `scripts/probe-rename.js` | `rename` 的 ondup 语义对照实验 |
@@ -401,7 +556,8 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 ## 开发 / 测试
 
 ```bat
-npm test                                  :: 22 项离线契约测试
+npm test                                  :: 47 项离线测试（22 契约 + 25 CLI）
+node --test test/cli.test.js              :: 只跑 CLI / 平台适配那部分
 node scripts/peek.js --root /WebDAV/SyncDisk       :: 只读看看云端目录
 node scripts/live-smoke.js --root /WebDAV/asy-webdav-test  :: 真实云盘全流程（自己清理）
 ```

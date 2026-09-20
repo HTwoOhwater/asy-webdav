@@ -5,7 +5,7 @@
 //
 //   Zotero / Obsidian ──WebDAV──▶ 本服务 ──AnyShare HTTP API──▶ 山大云盘
 //
-// 配置：同目录 config.json（首次运行自动生成）
+// 配置：位置由 lib/paths.js 决定（默认与包同目录，可用 ASY_WEBDAV_HOME 覆盖）
 //   port            监听端口
 //   host            监听地址（默认 127.0.0.1）
 //   hosts           要监听的多个地址（优先级高于 host）。例如同时监听本机与 Tailscale：
@@ -24,67 +24,29 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const http = require('http');
 
 const { v2: webdav } = require('webdav-server');
 const asy = require('./lib/asy-cli');
+const paths = require('./lib/paths');
+const configLib = require('./lib/config');
 const { AnyShareClient } = require('./lib/client');
 const { AnyShareFileSystem } = require('./lib/anyshare-fs');
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-
 // ---------------------------------------------------------------- 配置
-function loadConfig() {
-  if (fs.existsSync(CONFIG_PATH)) {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-    return Object.assign(defaults(), raw);
-  }
-  const cfg = defaults();
-  cfg.password = crypto.randomBytes(9).toString('base64url');
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+const { cfg: config, created } = configLib.loadOrCreate();
+if (created) {
   console.log('='.repeat(64));
   console.log('【首次运行】已生成 config.json（含随机密码）：');
-  console.log('  端口       : ' + cfg.port);
-  console.log('  用户名     : ' + cfg.username);
-  console.log('  密码       : ' + cfg.password);
-  console.log('  云端根目录 : ' + cfg.remoteRoot);
+  console.log('  位置       : ' + paths.CONFIG_PATH);
+  console.log('  端口       : ' + config.port);
+  console.log('  用户名     : ' + config.username);
+  console.log('  密码       : ' + config.password);
+  console.log('  云端根目录 : ' + config.remoteRoot);
   console.log('  >> 请按需修改（尤其是 remoteRoot 与密码），然后重启本服务。');
   console.log('='.repeat(64));
-  return cfg;
 }
-
-function defaults() {
-  return {
-    port: 1901,
-    host: '127.0.0.1',
-    // 想同时监听多个地址就填 hosts（优先级高于 host），例如：
-    //   "hosts": ["127.0.0.1", "100.x.y.z"]   ← 本机 + Tailscale
-    // 这样本机的 Zotero 和尾网里的设备都能连，而校园网 IP 上访问不到。
-    hosts: [],
-    username: 'webdav',
-    password: '',
-    remoteRoot: '/WebDAV/SyncDisk',
-    cacheTtlMs: 15000,
-    apiConcurrency: 4,
-    // 上传重名策略。实测语义（scripts/probe-ondup.js 验证过）：
-    //   1=拒绝同名  2=保留两者(自动改名)  3=覆盖
-    // WebDAV 的 PUT 语义就是覆盖，所以默认 3。
-    ondup: 3,
-    debug: false,
-    asyConfigDir: '',
-  };
-}
-
-// 解析出要监听的地址列表。hosts 非空时以它为准，否则退回单个 host。
-function resolveHosts(cfg) {
-  const list = Array.isArray(cfg.hosts) ? cfg.hosts.filter((h) => typeof h === 'string' && h.trim()) : [];
-  const hosts = list.length ? list.map((h) => h.trim()) : [cfg.host || '127.0.0.1'];
-  // 去重（保序）
-  return hosts.filter((h, i) => hosts.indexOf(h) === i);
-}
-
-const config = loadConfig();
+const resolveHosts = configLib.resolveHosts;
 
 // ---------------------------------------------------------------- 日志
 function makeLogger(debug) {
@@ -150,7 +112,7 @@ const server = new webdav.WebDAVServer({
 });
 
 // 访问日志（排查 Zotero/Obsidian 连接问题用）
-const ACCESS_LOG = path.join(__dirname, 'access.log');
+const ACCESS_LOG = paths.ACCESS_LOG;
 server.afterManagers.push((ctx, next) => {
   try {
     const who = (ctx.user && (ctx.user.uid || ctx.user.name)) || 'anonymous';

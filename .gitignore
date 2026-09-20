@@ -10,6 +10,11 @@ server.err.log
 *.log
 *.tmp
 
+# CLI 运行期文件
+server.pid
+service.cmd
+.write-test
+
 # 编辑器 / 系统
 .DS_Store
 Thumbs.db
