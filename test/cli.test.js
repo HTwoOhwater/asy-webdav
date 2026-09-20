@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { parseArgs, dispWidth, padLabel } = require('../cli');
+const { parseArgs, dispWidth, padLabel, validateHosts, candidateAddresses } = require('../cli');
 const service = require('../lib/service');
 const configLib = require('../lib/config');
 const paths = require('../lib/paths');
@@ -62,6 +62,45 @@ test('dispWidth: 中文按双宽计算', () => {
 test('padLabel: 中英文混排后宽度一致', () => {
   assert.strictEqual(dispWidth(padLabel('状态', 13)), 13);
   assert.strictEqual(dispWidth(padLabel('access_token', 13)), 13);
+});
+
+// ---------------------------------------------------------------- 监听地址校验
+test('validateHosts: 拒绝网段（CIDR）—— listen() 会 ENOTFOUND', () => {
+  const { errors, warnings } = validateHosts(['100.64.0.0/10']);
+  assert.strictEqual(errors.length, 1);
+  assert.ok(errors[0].includes('网段'));
+  assert.strictEqual(warnings.length, 0, '网段属于硬错误，不该只给警告');
+});
+
+test('validateHosts: 回环地址合法且无警告', () => {
+  const { errors, warnings } = validateHosts(['127.0.0.1', '::1', 'localhost']);
+  assert.deepStrictEqual(errors, []);
+  assert.deepStrictEqual(warnings, []);
+});
+
+test('validateHosts: 不属于本机的地址只给警告（地址可能还没就绪）', () => {
+  const { errors, warnings } = validateHosts(['203.0.113.7']);
+  assert.deepStrictEqual(errors, [], '不该硬拦，否则 Tailscale 未启动时没法预先配置');
+  assert.strictEqual(warnings.length, 1);
+  assert.ok(warnings[0].includes('203.0.113.7'));
+  assert.ok(warnings[0].includes('EADDRNOTAVAIL'));
+});
+
+test('validateHosts: 0.0.0.0 语法合法（虽然 README 不推荐）', () => {
+  const { errors } = validateHosts(['0.0.0.0']);
+  assert.deepStrictEqual(errors, []);
+});
+
+test('validateHosts: 一次报出多个问题', () => {
+  const { errors } = validateHosts(['10.0.0.0/8', '192.168.1.0/24']);
+  assert.strictEqual(errors.length, 2);
+});
+
+test('candidateAddresses: 不含回环与通配地址', () => {
+  const c = candidateAddresses();
+  for (const bad of ['127.0.0.1', '0.0.0.0', '::1', 'localhost', '::']) {
+    assert.ok(!c.includes(bad), '不应包含 ' + bad);
+  }
 });
 
 // ---------------------------------------------------------------- config

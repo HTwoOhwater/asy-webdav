@@ -181,6 +181,50 @@ function localAddresses() {
   return set;
 }
 
+/** 本机可用的非回环地址（提示用户 hosts 该填什么） */
+function candidateAddresses() {
+  const locals = localAddresses();
+  return [...locals].filter(
+    (a) => !a.startsWith('127.') && a !== '::1' && a !== 'localhost' && a !== '0.0.0.0' && a !== '::'
+  );
+}
+
+/**
+ * 校验监听地址。
+ * 要点：hosts 填的是「本机要绑定到哪个地址」，**不是**「允许哪些客户端」。
+ * 绑定本机的一个地址之后，那个网络上的所有设备都能连，不需要也不支持网段。
+ * @returns {{errors: string[], warnings: string[]}}
+ */
+function validateHosts(list) {
+  const errors = [];
+  const warnings = [];
+  const locals = localAddresses();
+  const candidates = candidateAddresses();
+
+  for (const h of list) {
+    if (String(h).includes('/')) {
+      errors.push(
+        '"' +
+          h +
+          '" 是网段（CIDR），不能用作监听地址。\n' +
+          '      hosts 填的是「本机绑定到哪个地址」，不是「允许哪些客户端访问」。\n' +
+          '      绑定本机的一个地址后，该网络上的所有设备都能连，不需要写网段。'
+      );
+    } else if (!locals.has(h)) {
+      warnings.push(
+        '"' +
+          h +
+          '" 当前不属于本机，服务启动时会因 EADDRNOTAVAIL 失败。\n' +
+          (candidates.length
+            ? '      本机可用地址：' + candidates.join(', ')
+            : '      （未检测到非回环地址）') +
+          '\n      如果地址还没就绪（例如 Tailscale 还没启动），可以稍后再改。'
+      );
+    }
+  }
+  return { errors, warnings };
+}
+
 function mask(v) {
   if (!v) return '(未设置)';
   return String(v).slice(0, 3) + '***(' + String(v).length + ' 位)';
@@ -522,6 +566,17 @@ function cmdConfig(args) {
     else if (Array.isArray(d)) cfg[key] = String(value).split(',').map((s) => s.trim()).filter(Boolean);
     else cfg[key] = value;
 
+    // 监听地址容易填错（写成网段、或写了别的机器的地址），在这里就拦住
+    if (key === 'hosts' || key === 'host') {
+      const list = key === 'hosts' ? cfg.hosts : [cfg.host];
+      const { errors, warnings } = validateHosts(list);
+      if (errors.length) {
+        throw new Error('监听地址不合法：\n  ' + errors.join('\n  '));
+      }
+      for (const w of warnings) console.warn('⚠️ ' + w);
+      if (warnings.length) console.warn('');
+    }
+
     configLib.save(cfg);
     console.log('✅ ' + key + ' = ' + (key === 'password' ? mask(value) : JSON.stringify(cfg[key])));
     if (key === 'port' || key === 'hosts' || key === 'host') {
@@ -595,7 +650,13 @@ async function cmdDoctor() {
           '）'
       );
     } else {
-      add('ok', '监听地址', hosts.map((h) => h + ':' + cfg.port).join(', '));
+      const cands = candidateAddresses();
+      add(
+        'ok',
+        '监听地址',
+        hosts.map((h) => h + ':' + cfg.port).join(', ') +
+          (cands.length ? '\n    本机可用地址：' + cands.join(', ') : '')
+      );
     }
 
     // 5. 端口占用
@@ -751,4 +812,13 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, dispWidth, padLabel, probeWebdav, localAddresses, mask };
+module.exports = {
+  parseArgs,
+  dispWidth,
+  padLabel,
+  probeWebdav,
+  localAddresses,
+  candidateAddresses,
+  validateHosts,
+  mask,
+};

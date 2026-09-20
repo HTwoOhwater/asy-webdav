@@ -103,7 +103,7 @@ npm install
 |---|---|
 | `port` | 监听端口（默认 1901） |
 | `host` | 单个监听地址。默认 `127.0.0.1`（只本机可访问） |
-| `hosts` | **要同时监听多个地址时用这个**（优先级高于 `host`）。例如 `["127.0.0.1", "100.x.y.z"]` = 本机 + Tailscale，本机客户端和尾网设备都能连，而校园网 IP 上访问不到 |
+| `hosts` | **要同时监听多个地址时用这个**（优先级高于 `host`）。例如 `["127.0.0.1", "100.104.198.100"]` = 本机 + Tailscale。填的是**本机要绑定的地址**，不是客户端白名单，也**不支持网段**（见下） |
 | `username` / `password` | WebDAV Basic 认证（强制开启） |
 | `remoteRoot` | WebDAV 的 `/` 映射到云端哪个目录。默认 `/WebDAV/SyncDisk`（和原方案同一个目录，可无缝切换） |
 | `cacheTtlMs` | 目录列举缓存。**这个值直接决定 API 调用量**，15 秒足够 Zotero/Obsidian 用 |
@@ -113,6 +113,19 @@ npm install
 
 > ⚠️ **不要用 `0.0.0.0`**。那会让服务同时暴露在校园网 IP 上（`<校园网IP>`），
 > 而保护只有一层 Basic 认证。用 `hosts` 明确列出允许的地址即可。
+
+> 📌 **`hosts` 填的是「本机绑定到哪个地址」，不是「允许哪些客户端访问」。**
+>
+> 这是最容易搞混的一点。绑定本机的一个地址之后，那个网络上的**所有**设备都能连，
+> 不需要、也**不能**写网段：
+>
+> - 实测 `["100.64.0.0/10"]` → 启动失败：`getaddrinfo ENOTFOUND 100.64.0.0/10`
+>   （`listen()` 会把 host 当主机名去解析，CIDR 解析不了）
+> - 实测绑定 `100.104.198.100` 时，iPad（`100.109.148.19`）发了 **195 个请求全部成功** ——
+>   客户端 IP 和绑定 IP 不同，照样能连
+>
+> 所以只需填**本机自己的地址**，一个就够。`asy-webdav config set hosts` 会在填错时当场提示，
+> `asy-webdav doctor` 也会列出本机可用地址。
 
 ### 3. 启动
 
@@ -325,7 +338,7 @@ asy-webdav doctor
 
 | 配置 | 不改会怎样 |
 |---|---|
-| `hosts` | 里面写死的旧机器 IP 不属于新机器时，`listen` 报 `EADDRNOTAVAIL`，服务**直接启动失败**。改成新机器自己的地址（`ipconfig` / `ip addr` 看） |
+| `hosts` | 里面写死的旧机器 IP 不属于新机器时，`listen` 报 `EADDRNOTAVAIL`，服务**直接启动失败**。改成新机器自己的地址（`ipconfig` / `ip addr` 看，或跑 `asy-webdav doctor` 让它列出来）。**只填地址，不填网段** |
 | `remoteRoot` | 必须和旧机器**一字不差**，否则客户端看到的是另一个目录 |
 
 > ⚠️ `remoteRoot` 是唯一真正危险的一项。如果指到一个空目录，
@@ -492,11 +505,11 @@ GET /同步测试.txt -> HTTP 200, Content-Length 33, 实收 33 B
 PROPFIND /zotero Depth:1 -> HTTP 207，579 个子项   ← 真实 Zotero 附件库
 ```
 
-### 离线测试（`npm test`，55/55 通过）
+### 离线测试（`npm test`，61/61 通过）
 
 - **22 项契约测试**：用内存假云盘 + 假对象存储跑一个**真实的 webdav-server**，
   发真实 HTTP 请求，不碰学校服务器、不产生外网流量。
-- **25 项 CLI 测试**：参数解析、中文对齐、配置默认值，
+- **31 项 CLI 测试**：参数解析、中文对齐、配置默认值、监听地址校验，
   以及三个平台的服务配置生成（systemd unit / launchd plist / Windows 包装脚本）
   都是纯函数，可以在任何系统上验证任意平台的输出。
 - **8 项配置测试**：含一条回归测试 —— **首次生成配置必须带非空随机密码**。
@@ -604,7 +617,7 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 | `lib/util.js` | TTL 缓存、并发闸门、路径工具 |
 | `test/fake-cloud.js` | 测试用假云盘（内存 API + 假对象存储），行为刻意模仿真实 API 的怪癖 |
 | `test/contract.test.js` | 22 项端到端契约测试 |
-| `test/cli.test.js` | 25 项 CLI / 平台适配单元测试（纯函数，不碰网络与系统） |
+| `test/cli.test.js` | 31 项 CLI / 平台适配单元测试（纯函数，不碰网络与系统） |
 | `test/config.test.js` | 8 项配置模块测试（含「不得生成空密码」的回归测试） |
 | `scripts/live-smoke.js` | 真实云盘冒烟测试（16 项，自动清理） |
 | `scripts/probe-ondup.js` | `ondup` 语义对照实验 |
@@ -617,7 +630,7 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 ## 开发 / 测试
 
 ```bat
-npm test                                  :: 55 项离线测试
+npm test                                  :: 61 项离线测试
 node --test test/cli.test.js              :: 只跑 CLI / 平台适配
 node --test test/config.test.js           :: 只跑配置模块
 node scripts/peek.js --root /WebDAV/SyncDisk       :: 只读看看云端目录
