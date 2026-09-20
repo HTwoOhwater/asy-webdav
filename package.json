@@ -33,7 +33,7 @@
   ],
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/contract.test.js test/cli.test.js"
+    "test": "node --test test/contract.test.js test/cli.test.js test/config.test.js"
   },
   "engines": {
     "node": ">=18"

@@ -34,8 +34,16 @@
 不需要手动克隆。装完登录一次即可（token 会自动续期）：
 
 ```bat
-asy login --cas
+asy-webdav login --cas
 ```
+
+> **为什么不是 `asy login`**：npm 全局安装时**不会**把依赖包的 bin 放到 PATH 上
+> （实测 `asy.cmd` 只躺在 `node_modules/asy-webdav/node_modules/.bin/` 里，外面调不到）。
+> `asy-webdav login` 直接用装载器解析到的那个 asy-cli 实例，参数**原样转发**
+> （`--cas`、`--cookie`、`--refresh-token` 等都能用），也保证凭据写进服务将要读取的目录。
+>
+> 想单独把 asy-cli 当命令行工具用，再装一次即可：
+> `npm i -g github:HTwoOhwater/anyshare-university-cli`
 
 > 本网关按下面的顺序找 `asy-cli`：
 >
@@ -199,6 +207,12 @@ asy-webdav start --foreground
 - 服务由 systemd / 任务计划程序拉起时**根本没有 PID 文件**，只看文件会误判成「未运行」；
 - 反过来，手工 `node server.js` 起的进程也能被 `stop` 认出来（按端口反查 PID）。
 
+### 后端登录
+
+| 命令 | 说明 |
+|---|---|
+| `asy-webdav login [参数…]` | 登录云盘，参数原样转发给 asy-cli（如 `asy-webdav login --cas`） |
+
 ### 配置与诊断
 
 | 命令 | 说明 |
@@ -286,6 +300,48 @@ asy-webdav service install --dry-run
 
 如果是从 iPad 通过 Tailscale 连桌面机，而桌面机重启后停在登录界面，
 默认方式就连不上 —— 要避免就必须用 `--boot`。
+
+## 在新机器上部署
+
+```bat
+:: 1. 装（需要 Node 18+）
+npm install -g github:HTwoOhwater/asy-webdav
+
+:: 2. 登录云盘（asy-cli 会作为依赖自动装好）
+asy-webdav login --cas
+
+:: 3. 生成配置，记下打印出来的密码
+asy-webdav config show
+
+:: 4. 改监听地址 —— 填新机器自己的地址
+asy-webdav config set hosts 127.0.0.1,100.x.y.z
+
+:: 5. 启动并自检
+asy-webdav start
+asy-webdav doctor
+```
+
+### 必须改的两项
+
+| 配置 | 不改会怎样 |
+|---|---|
+| `hosts` | 里面写死的旧机器 IP 不属于新机器时，`listen` 报 `EADDRNOTAVAIL`，服务**直接启动失败**。改成新机器自己的地址（`ipconfig` / `ip addr` 看） |
+| `remoteRoot` | 必须和旧机器**一字不差**，否则客户端看到的是另一个目录 |
+
+> ⚠️ `remoteRoot` 是唯一真正危险的一项。如果指到一个空目录，
+> Remotely Save 可能把「云端为空」理解成「文件都被删了」，**反向删除本地文件**。
+> 改完先跑 `asy-webdav doctor` 确认树是对的，再让客户端连。
+
+### 迁移顺序
+
+两个实例共用同一份 `refresh_token` 会互相踢下线，所以按这个顺序：
+
+```
+新机器装好 → asy-webdav doctor 通过 → 旧机器 asy-webdav stop → 客户端改地址
+```
+
+`asy-webdav doctor` 会把上面每一项都检查一遍，包括「监听地址是否属于本机」
+和「WebDAV 密码是否为空」。
 
 ## 远程访问（Tailscale）
 
@@ -436,13 +492,17 @@ GET /同步测试.txt -> HTTP 200, Content-Length 33, 实收 33 B
 PROPFIND /zotero Depth:1 -> HTTP 207，579 个子项   ← 真实 Zotero 附件库
 ```
 
-### 离线测试（`npm test`，47/47 通过）
+### 离线测试（`npm test`，55/55 通过）
 
 - **22 项契约测试**：用内存假云盘 + 假对象存储跑一个**真实的 webdav-server**，
   发真实 HTTP 请求，不碰学校服务器、不产生外网流量。
-- **25 项 CLI 测试**：参数解析、中文对齐、配置默认值、
+- **25 项 CLI 测试**：参数解析、中文对齐、配置默认值，
   以及三个平台的服务配置生成（systemd unit / launchd plist / Windows 包装脚本）
   都是纯函数，可以在任何系统上验证任意平台的输出。
+- **8 项配置测试**：含一条回归测试 —— **首次生成配置必须带非空随机密码**。
+  曾经 `asy-webdav config set` 在配置文件不存在时会生成**空密码**的配置，
+  服务随后以空密码对外提供 WebDAV（实测 `webdav:` + 空密码 PROPFIND 返回 207）。
+  现在所有会写配置的路径都走 `loadOrCreate()`，且 `doctor` 会把空密码判为失败。
 
 ---
 
@@ -545,6 +605,7 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 | `test/fake-cloud.js` | 测试用假云盘（内存 API + 假对象存储），行为刻意模仿真实 API 的怪癖 |
 | `test/contract.test.js` | 22 项端到端契约测试 |
 | `test/cli.test.js` | 25 项 CLI / 平台适配单元测试（纯函数，不碰网络与系统） |
+| `test/config.test.js` | 8 项配置模块测试（含「不得生成空密码」的回归测试） |
 | `scripts/live-smoke.js` | 真实云盘冒烟测试（16 项，自动清理） |
 | `scripts/probe-ondup.js` | `ondup` 语义对照实验 |
 | `scripts/probe-rename.js` | `rename` 的 ondup 语义对照实验 |
@@ -556,8 +617,9 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 ## 开发 / 测试
 
 ```bat
-npm test                                  :: 47 项离线测试（22 契约 + 25 CLI）
-node --test test/cli.test.js              :: 只跑 CLI / 平台适配那部分
+npm test                                  :: 55 项离线测试
+node --test test/cli.test.js              :: 只跑 CLI / 平台适配
+node --test test/config.test.js           :: 只跑配置模块
 node scripts/peek.js --root /WebDAV/SyncDisk       :: 只读看看云端目录
 node scripts/live-smoke.js --root /WebDAV/asy-webdav-test  :: 真实云盘全流程（自己清理）
 ```

@@ -46,6 +46,11 @@ asy-webdav ${VERSION} —— AnyShare WebDAV 网关
     --system 装成系统级服务（Linux / macOS 需要 sudo）
     --home  指定运行目录（放 config.json 与日志），默认与包同目录
 
+后端登录
+  asy-webdav login [--cas]            登录云盘。参数原样转发给 asy-cli，
+                                      例如 asy-webdav login --cas
+                                      （全局安装时 npm 不会提供 asy 命令，用这个）
+
 配置
   asy-webdav config show              显示配置（密码打码）
   asy-webdav config set <键> <值>      修改配置
@@ -146,6 +151,27 @@ function tryLoadAsy() {
   }
 }
 
+/**
+ * 读取配置；文件不存在就生成一份带随机密码的，并把密码打出来。
+ *
+ * ⚠️ 任何会**写**配置的地方都必须走这里，不能用 configLib.load()：
+ * load() 在文件缺失时返回 defaults()，而 defaults().password 是空串，
+ * 直接 save 就会生成一份「无密码」的配置 —— 服务随后以空密码对外提供
+ * WebDAV（实测用 `webdav:` 空密码请求 PROPFIND 返回 207，能读能写）。
+ */
+function ensureConfig() {
+  const { cfg, created } = configLib.loadOrCreate();
+  if (created) {
+    console.log('【首次运行】已生成 config.json');
+    console.log('  位置   : ' + paths.CONFIG_PATH);
+    console.log('  用户名 : ' + cfg.username);
+    console.log('  密码   : ' + cfg.password);
+    console.log('  >> WebDAV 客户端要用这组凭据；之后可用 asy-webdav config show 查看。');
+    console.log('');
+  }
+  return cfg;
+}
+
 function localAddresses() {
   const set = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0', '::']);
   const ifaces = os.networkInterfaces();
@@ -186,8 +212,14 @@ function resolveServiceCreds() {
 
 // ---------------------------------------------------------------- start
 async function cmdStart(args) {
-  const cfg = configLib.load();
+  const cfg = ensureConfig();
   const hosts = configLib.resolveHosts(cfg);
+
+  if (!cfg.password) {
+    console.warn('⚠️ config.json 里的 password 是空的 —— 任何人都能用空密码读写你的云盘！');
+    console.warn('   请立刻设置：asy-webdav config set password <一个强密码>');
+    console.warn('');
+  }
 
   if (args.flags.foreground) {
     console.log('以前台方式启动（Ctrl+C 停止，不写 PID 文件）...');
@@ -465,7 +497,7 @@ function cmdConfig(args) {
     return;
   }
 
-  const cfg = configLib.load();
+  const cfg = ensureConfig();
 
   if (sub === 'show' || !sub) {
     const view = Object.assign({}, cfg);
@@ -540,6 +572,16 @@ async function cmdDoctor() {
 
   // 4. 监听地址是否属于本机 —— 换机器部署最容易踩的坑
   if (cfg) {
+    // 空密码 = 任何人都能用空密码读写云盘（实测 PROPFIND 返回 207）
+    if (!cfg.password) {
+      add(
+        'fail',
+        'WebDAV 密码为空',
+        '任何人都能用「用户名 ' + cfg.username + ' + 空密码」读写你的云盘。\n' +
+          '    立刻修复：asy-webdav config set password <一个强密码>'
+      );
+    }
+
     const hosts = configLib.resolveHosts(cfg);
     const locals = localAddresses();
     const bad = hosts.filter((h) => !locals.has(h));
@@ -615,6 +657,50 @@ async function cmdDoctor() {
   if (fails) process.exitCode = 1;
 }
 
+// ---------------------------------------------------------------- login
+/**
+ * 委托给 asy-cli 的登录流程。
+ * 存在的意义：全局安装 asy-webdav 时，npm **不会**把 asy-cli 的 `asy` 命令
+ * 放到 PATH 上（它只躺在包的内部 .bin 里）。这里直接用装载器解析到的那个
+ * asy-cli 实例，既省掉一次全局安装，也保证凭据写进服务将要读取的目录。
+ */
+async function cmdLogin(args) {
+  const asy = tryLoadAsy();
+  if (!asy.ok) {
+    throw new Error(
+      '找不到 asy-cli，无法登录：\n  ' +
+        String(asy.error).split('\n')[0] +
+        '\n  请先执行 npm install，或设置 ASY_CLI_PATH。'
+    );
+  }
+
+  const cfg = configLib.load();
+  const env = Object.assign({}, process.env);
+  if (cfg.asyConfigDir) env.ASY_CONFIG_DIR = path.resolve(cfg.asyConfigDir);
+
+  const asyJs = path.join(asy.root, 'asy.js');
+  const passthrough = process.argv.slice(3); // `login` 之后的参数原样转发
+
+  console.log('调用: ' + asyJs + ' login ' + passthrough.join(' '));
+  console.log('凭据目录: ' + (env.ASY_CONFIG_DIR || asy.configDir));
+  console.log('');
+
+  const { spawn } = require('child_process');
+  const code = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [asyJs, 'login'].concat(passthrough), {
+      stdio: 'inherit',
+      env,
+    });
+    child.on('error', reject);
+    child.on('exit', (c) => resolve(c === null ? 1 : c));
+  });
+  if (code !== 0) {
+    const e = new Error('登录未成功（退出码 ' + code + '）');
+    e.code = 'ELOGINFAILED';
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------- main
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -624,7 +710,12 @@ async function main() {
     console.log(VERSION);
     return;
   }
-  if (!cmd || cmd === 'help' || args.flags.help) {
+  if (!cmd || cmd === 'help') {
+    console.log(HELP);
+    return;
+  }
+  // login 的 --help 要转发给 asy-cli，否则用户看不到它自己的参数说明
+  if (args.flags.help && cmd !== 'login') {
     console.log(HELP);
     return;
   }
@@ -637,6 +728,7 @@ async function main() {
     logs: cmdLogs,
     service: cmdService,
     config: async (a) => cmdConfig(a),
+    login: cmdLogin,
     doctor: cmdDoctor,
   };
 
