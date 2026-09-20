@@ -1,0 +1,31 @@
+{
+  "name": "asy-webdav",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AnyShare(山大云盘) HTTP API -> WebDAV 网关：把 asy-cli 的云盘 API 直接包装成 WebDAV，供 Zotero / Obsidian 使用，无需官方客户端与本地同步盘",
+  "main": "server.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HTwoOhwater/asy-webdav.git"
+  },
+  "keywords": [
+    "webdav",
+    "anyshare",
+    "zotero",
+    "obsidian",
+    "icloud",
+    "sdu",
+    "webdav-server"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/contract.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "webdav-server": "^2.6.3"
+  }
+}

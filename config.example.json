@@ -1,0 +1,13 @@
+{
+  "port": 1901,
+  "host": "127.0.0.1",
+  "hosts": [],
+  "username": "webdav",
+  "password": "改成你自己的强密码",
+  "remoteRoot": "/WebDAV/SyncDisk",
+  "cacheTtlMs": 15000,
+  "apiConcurrency": 4,
+  "ondup": 3,
+  "debug": false,
+  "asyConfigDir": ""
+}

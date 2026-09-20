@@ -1,0 +1,14 @@
+# 默认：仓库里统一用 LF，检出时按平台自动转换
+* text=auto eol=lf
+
+# Windows 批处理必须是 CRLF，否则 cmd.exe 解析 goto/label 会出问题
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.zip binary
+*.ico binary

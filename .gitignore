@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+
+# 运行时产物 / 含凭据与个人信息的文件 —— 绝对不要提交
+config.json
+.asy-config/
+access.log
+server.log
+server.err.log
+*.log
+*.tmp
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
