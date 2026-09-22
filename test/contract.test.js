@@ -12,11 +12,15 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const net = require('net');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { v2: webdav } = require('webdav-server');
 
 const { startObjectStore, FakeApi } = require('./fake-cloud');
 const { AnyShareClient } = require('../lib/client');
 const { AnyShareFileSystem } = require('../lib/anyshare-fs');
+const { ContentCache } = require('../lib/cache');
 
 const USER = 'webdav';
 const PASS = 'test-pass';
@@ -27,6 +31,8 @@ let client;
 let server;
 let base;
 let auth;
+let cacheDir;
+let contentCache;
 
 function freePort() {
   return new Promise((resolve) => {
@@ -57,10 +63,13 @@ before(async () => {
   api.addFile('/zotero', 'old', 'old-content');
 
   client = new AnyShareClient({ api, basePath: '/', ttlMs: 60000, concurrency: 8 });
+  cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'asy-webdav-contract-cache-'));
+  contentCache = new ContentCache(cacheDir, 1024 * 1024);
   const fsys = new AnyShareFileSystem(client, {
     log: (level, msg) => {
       if (level === 'error') console.error('[fs] ' + msg);
     },
+    contentCache,
   });
 
   const userManager = new webdav.SimpleUserManager();
@@ -91,6 +100,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.stop(r));
   if (obj) await obj.close();
+  if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------- 认证
@@ -151,6 +161,19 @@ test('GET 取回刚上传的文件，字节完全一致', async () => {
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.text, 'hello anyshare webdav');
   assert.strictEqual(r.headers.get('content-length'), '21');
+});
+
+test('再次 GET 相同 rev 时从内容缓存读取，不再请求下载链接', async () => {
+  for (let i = 0; i < 100 && contentCache.stats.writes < 1; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.strictEqual(contentCache.stats.writes, 1, '首次 GET 应写入内容缓存');
+  const before = api.callsFor('osdownload');
+  const r = await req('GET', '/notes/a.txt');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.text, 'hello anyshare webdav');
+  assert.strictEqual(api.callsFor('osdownload'), before);
+  assert.strictEqual(contentCache.stats.hits, 1);
 });
 
 test('HEAD 返回正确的 Content-Length', async () => {

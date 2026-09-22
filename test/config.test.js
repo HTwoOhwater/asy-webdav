@@ -99,4 +99,6 @@ test('load：部分字段缺失时用默认值补齐', () => {
   assert.strictEqual(cfg.port, 1999);
   assert.strictEqual(cfg.remoteRoot, '/WebDAV/SyncDisk', '缺失字段应回落到默认值');
   assert.strictEqual(cfg.username, 'webdav');
+  assert.strictEqual(cfg.metadataCacheTtlMs, 300000);
+  assert.strictEqual(cfg.contentCacheMaxBytes, 1073741824);
 });

@@ -95,6 +95,8 @@ npm install
   "apiConcurrency": 4,
   "apiTimeoutMs": 8000,
   "apiReadRetries": 1,
+  "metadataCacheTtlMs": 300000,
+  "contentCacheMaxBytes": 1073741824,
   "ondup": 3,
   "debug": false,
   "asyConfigDir": ""
@@ -112,6 +114,8 @@ npm install
 | `apiConcurrency` | 同时在飞的云盘 API 请求上限，别设太大 |
 | `apiTimeoutMs` | 单次云盘 API 请求超时，默认 8 秒，避免挂起请求永久占住并发槽 |
 | `apiReadRetries` | GET、路径查询、下载链接等只读请求失败后的重试次数；写请求不会自动重试 |
+| `metadataCacheTtlMs` | 持久化目录元数据多久后重新向云端核对；默认 5 分钟，回源失败时继续使用旧快照 |
+| `contentCacheMaxBytes` | 下载内容缓存容量上限；默认 1 GiB，按最近使用时间淘汰，设为 `0` 可禁用 |
 | `ondup` | 上传重名策略：`1`=拒绝同名 `2`=保留两者 `3`=覆盖（默认 3，见下文实测） |
 | `asyConfigDir` | 本服务独立使用的 asy-cli 凭据目录，**强烈建议设置**（见「坑」第 1 条） |
 
@@ -590,6 +594,11 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 `apiReadRetries` 重试。创建、上传、删除、移动和复制不会自动重试，因为客户端超时时，服务端可能
 已经完成写入，盲目重试可能产生重复操作。最终失败会向 WebDAV 客户端返回 `503`（网络故障）或
 `504`（上游超时），同时服务端日志记录 API 路径和耗时，但不记录 token 或下载签名。
+
+元数据快照保存在运行目录的 `cache/metadata.json`，只包含路径、大小、时间、`docid` 和 `rev`。
+实际下载过的文件缓存在 `cache/content/`，以 `docid + rev` 的 SHA-256 作为本地文件名；这里的
+SHA-256 只用于生成安全的缓存键，不需要预先下载文件计算内容哈希。缓存文件长度与元数据不一致时
+会被丢弃。写操作会先使相关元数据失效，随后才修改云端，避免不确定写入后继续使用旧快照。
 
 ### 7. 目录的 `modified_at` 不随子文件变化
 

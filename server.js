@@ -34,6 +34,7 @@ const paths = require('./lib/paths');
 const configLib = require('./lib/config');
 const { AnyShareClient } = require('./lib/client');
 const { AnyShareFileSystem } = require('./lib/anyshare-fs');
+const { MetadataStore, ContentCache } = require('./lib/cache');
 
 // ---------------------------------------------------------------- 配置
 const { cfg: config, created } = configLib.loadOrCreate();
@@ -84,6 +85,8 @@ if (!config.asyConfigDir) {
 }
 
 // ---------------------------------------------------------------- 文件系统
+const metadataStore = new MetadataStore(paths.METADATA_CACHE_PATH, config.metadataCacheTtlMs, log);
+const contentCache = new ContentCache(paths.CONTENT_CACHE_DIR, config.contentCacheMaxBytes, log);
 const client = new AnyShareClient({
   cfg: asyCfg,
   basePath: config.remoteRoot,
@@ -93,11 +96,13 @@ const client = new AnyShareClient({
   readRetries: config.apiReadRetries,
   debug: config.debug,
   log,
+  metadataStore,
 });
 
 const vfs = new AnyShareFileSystem(client, {
   ondup: config.ondup,
   log,
+  contentCache,
 });
 
 // ---------------------------------------------------------------- 认证
@@ -183,6 +188,10 @@ async function main() {
       console.log('   Obsidian : ' + first + '/obsidian/<你的 vault 目录>');
       console.log('');
       console.log('   缓存 TTL : ' + config.cacheTtlMs + ' ms    API 并发: ' + config.apiConcurrency);
+      console.log(
+        '   元数据缓存: ' + config.metadataCacheTtlMs + ' ms    内容缓存上限: ' +
+          config.contentCacheMaxBytes + ' B'
+      );
       console.log('   按 Ctrl+C 停止。');
     });
   });
@@ -226,7 +235,8 @@ function shutdown() {
   console.log(
     `API 调用 ${client.stats.apiCalls} 次，重试 ${client.stats.retries} 次，` +
       `合并 ${client.stats.coalesced} 次，缓存命中 ${client.stats.cacheHits} 次，` +
-      `未命中 ${client.stats.cacheMisses} 次`
+      `未命中 ${client.stats.cacheMisses} 次，持久化命中 ${client.stats.persistentHits} 次，` +
+      `过期兜底 ${client.stats.staleFallbacks} 次；内容命中 ${contentCache.stats.hits} 次`
   );
   for (const l of listeners) {
     try {

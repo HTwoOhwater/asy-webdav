@@ -9,6 +9,8 @@
   "apiConcurrency": 4,
   "apiTimeoutMs": 8000,
   "apiReadRetries": 1,
+  "metadataCacheTtlMs": 300000,
+  "contentCacheMaxBytes": 1073741824,
   "ondup": 3,
   "debug": false,
   "asyConfigDir": ""
