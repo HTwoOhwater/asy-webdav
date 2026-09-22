@@ -93,6 +93,8 @@ npm install
   "remoteRoot": "/WebDAV/SyncDisk",
   "cacheTtlMs": 15000,
   "apiConcurrency": 4,
+  "apiTimeoutMs": 8000,
+  "apiReadRetries": 1,
   "ondup": 3,
   "debug": false,
   "asyConfigDir": ""
@@ -108,6 +110,8 @@ npm install
 | `remoteRoot` | WebDAV 的 `/` 映射到云端哪个目录。默认 `/WebDAV/SyncDisk`（和原方案同一个目录，可无缝切换） |
 | `cacheTtlMs` | 目录列举缓存。**这个值直接决定 API 调用量**，15 秒足够 Zotero/Obsidian 用 |
 | `apiConcurrency` | 同时在飞的云盘 API 请求上限，别设太大 |
+| `apiTimeoutMs` | 单次云盘 API 请求超时，默认 8 秒，避免挂起请求永久占住并发槽 |
+| `apiReadRetries` | GET、路径查询、下载链接等只读请求失败后的重试次数；写请求不会自动重试 |
 | `ondup` | 上传重名策略：`1`=拒绝同名 `2`=保留两者 `3`=覆盖（默认 3，见下文实测） |
 | `asyConfigDir` | 本服务独立使用的 asy-cli 凭据目录，**强烈建议设置**（见「坑」第 1 条） |
 
@@ -580,7 +584,14 @@ node "C:\path\to\asy-cli\asy.js" login --cas
 
 服务本身也会在检测到这类错误时打印明确的提示，而不是丢一个 `invalid_grant` 让人猜。
 
-### 6. 目录的 `modified_at` 不随子文件变化
+### 6. 上游请求偶发卡住
+
+云盘 API 偶尔会长时间不返回。每个请求由 `apiTimeoutMs` 限定时间；超时后，只有读取类请求会按
+`apiReadRetries` 重试。创建、上传、删除、移动和复制不会自动重试，因为客户端超时时，服务端可能
+已经完成写入，盲目重试可能产生重复操作。最终失败会向 WebDAV 客户端返回 `503`（网络故障）或
+`504`（上游超时），同时服务端日志记录 API 路径和耗时，但不记录 token 或下载签名。
+
+### 7. 目录的 `modified_at` 不随子文件变化
 
 实测：`SyncDisk` 的 `modified_at` 停在 09-17，而里面文件的 `modified_at` 是 09-09。
 所以本服务的 **ETag 用文件的 `rev`**（32 位 hex 版本号），Last-Modified 用 `modified_at`（秒级）。

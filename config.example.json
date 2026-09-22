@@ -7,6 +7,8 @@
   "remoteRoot": "/WebDAV/SyncDisk",
   "cacheTtlMs": 15000,
   "apiConcurrency": 4,
+  "apiTimeoutMs": 8000,
+  "apiReadRetries": 1,
   "ondup": 3,
   "debug": false,
   "asyConfigDir": ""

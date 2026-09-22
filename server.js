@@ -15,6 +15,8 @@
 //   remoteRoot      WebDAV 的 "/" 映射到云盘的哪个目录，如 /WebDAV/SyncDisk
 //   cacheTtlMs      目录列举缓存有效期（毫秒），越大越省 API 调用
 //   apiConcurrency  同时最多几个云盘 API 请求
+//   apiTimeoutMs    单次云盘 API 请求超时（毫秒）
+//   apiReadRetries  只读请求失败后的重试次数（写请求永不自动重试）
 //   ondup           上传重名策略：1=拒绝同名 2=保留两者 3=覆盖（默认 3）
 //   debug           打印每次云盘 API 调用
 //   asyConfigDir    本服务独立使用的 asy-cli 凭据目录（强烈建议设置，见 README）
@@ -87,7 +89,10 @@ const client = new AnyShareClient({
   basePath: config.remoteRoot,
   ttlMs: config.cacheTtlMs,
   concurrency: config.apiConcurrency,
+  timeoutMs: config.apiTimeoutMs,
+  readRetries: config.apiReadRetries,
   debug: config.debug,
+  log,
 });
 
 const vfs = new AnyShareFileSystem(client, {
@@ -219,7 +224,8 @@ function shutdown() {
   stopping = true;
   console.log('\n正在停止服务...');
   console.log(
-    `API 调用 ${client.stats.apiCalls} 次，缓存命中 ${client.stats.cacheHits} 次，` +
+    `API 调用 ${client.stats.apiCalls} 次，重试 ${client.stats.retries} 次，` +
+      `合并 ${client.stats.coalesced} 次，缓存命中 ${client.stats.cacheHits} 次，` +
       `未命中 ${client.stats.cacheMisses} 次`
   );
   for (const l of listeners) {
