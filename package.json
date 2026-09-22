@@ -33,13 +33,13 @@
   ],
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/contract.test.js test/cli.test.js test/config.test.js"
+    "test": "node --test test/contract.test.js test/cli.test.js test/config.test.js test/resilience.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "anyshare-university-cli": "github:HTwoOhwater/anyshare-university-cli",
+    "anyshare-university-cli": "git+https://github.com/HTwoOhwater/anyshare-university-cli.git#6ab6888",
     "webdav-server": "^2.6.3"
   }
 }
